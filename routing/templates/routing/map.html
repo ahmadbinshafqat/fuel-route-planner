@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fuel Route Planner</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <style>
+    :root { --bg:#f7f7f5; --panel:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#e3e3de; --accent:#2563eb; --stop:#d97706; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#151514; --panel:#1f1f1d; --ink:#ececea; --muted:#a3a39e; --line:#34342f; --accent:#60a5fa; --stop:#f59e0b; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--ink); }
+    .app { display:grid; grid-template-columns: 380px 1fr; height:100vh; }
+    aside { background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; padding:16px; }
+    #map { height:100%; }
+    h1 { font-size:18px; margin:0 0 12px; }
+    form { display:grid; gap:8px; margin-bottom:16px; }
+    label { font-size:12px; color:var(--muted); display:grid; gap:2px; }
+    input { padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font:inherit; }
+    button { padding:9px; border:0; border-radius:6px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .error { background:#fee2e2; color:#991b1b; padding:10px; border-radius:6px; }
+    .choices { display:grid; gap:8px; margin-bottom:12px; }
+    .choice { display:block; text-decoration:none; color:inherit; border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+    .choice .t { font-weight:600; }
+    .choice .m { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+    .choice.kept { border-color:var(--accent); }
+    .choice .keep { margin-top:4px; font-size:12px; font-weight:600; color:var(--accent); }
+    .choice .bad { color:var(--muted); font-size:12px; }
+    .kpis { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px; }
+    .kpi { border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+    .kpi b { display:block; font-size:18px; font-variant-numeric:tabular-nums; }
+    .kpi span { font-size:12px; color:var(--muted); }
+    .kpis.three { grid-template-columns:repeat(3, 1fr); margin-bottom:6px; }
+    .kpi.saved b { color:#16a34a; }
+    .saved-why { margin:0 0 10px; }
+    .saved-why ul { margin:4px 0 0; padding-left:18px; }
+    #stops { padding:0; margin:0; list-style:none; display:grid; gap:8px; }
+    #stops li { border:1px solid var(--line); border-radius:8px; padding:8px 10px; cursor:pointer; }
+    #stops li:hover { border-color:var(--stop); }
+    #stops li .t { font-weight:600; }
+    #stops li .m { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+    #stops li .stats { margin-top:6px; display:grid; gap:2px; font-size:12px; font-variant-numeric:tabular-nums; }
+    #stops li.endpoint { cursor:default; background:var(--bg); }
+    #stops li.endpoint:hover { border-color:var(--line); }
+    .trip { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+    .trip div { border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+    .trip b { display:block; font-size:15px; font-variant-numeric:tabular-nums; }
+    .trip span { font-size:12px; color:var(--muted); }
+    .field { display:grid; gap:2px; }
+    .field > label { font-size:12px; color:var(--muted); }
+    .combo { position:relative; }
+    .combo input { width:100%; }
+    .combo [role=listbox] { position:absolute; z-index:1000; left:0; right:0; top:calc(100% + 4px); margin:0; padding:4px;
+      list-style:none; background:var(--panel); border:1px solid var(--line); border-radius:8px;
+      box-shadow:0 8px 24px rgba(0,0,0,.18); max-height:300px; overflow-y:auto; }
+    .combo [role=listbox] li { display:flex; justify-content:space-between; align-items:baseline; gap:8px;
+      padding:7px 8px; border-radius:6px; cursor:pointer; }
+    .combo [role=listbox] li small { color:var(--muted); font-size:12px; white-space:nowrap; }
+    .combo [role=listbox] li[aria-selected=true] { background:color-mix(in srgb, var(--accent) 18%, transparent); }
+    .combo [role=listbox] li.empty { color:var(--muted); cursor:default; }
+    input[aria-invalid=true] { border-color:#dc2626; }
+    .hint { color:#dc2626; font-size:12px; }
+    .hint:empty { display:none; }
+    button[disabled] { opacity:.7; cursor:progress; }
+    .pin { background:var(--stop); color:#fff; border-radius:50%; width:24px; height:24px; display:grid; place-items:center; font-weight:700; border:2px solid #fff; box-shadow:0 1px 3px rgba(0,0,0,.4); }
+    .note { color:var(--muted); font-size:12px; margin-top:12px; }
+    .help { color:var(--muted); font-size:12px; margin:0; }
+    #stops li .why { margin-top:6px; padding-top:6px; border-top:1px dashed var(--line); color:var(--muted); font-size:12px; }
+    @media (max-width: 760px) { .app { grid-template-columns:1fr; grid-template-rows:auto 60vh; height:auto; } aside { border-right:0; } }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>Fuel Route Planner</h1>
+    <form method="get">
+      <div class="field">
+        <label for="start">Start</label>
+        <div class="combo">
+          <input id="start" name="start" value="{{ query.start|default:'' }}" placeholder="Start typing, e.g. New York" required
+                 role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="start-list"
+                 aria-describedby="start-hint" autocomplete="off" spellcheck="false">
+          <ul id="start-list" role="listbox" aria-label="Start suggestions" hidden></ul>
+        </div>
+        <div class="hint" id="start-hint" aria-live="polite"></div>
+      </div>
+      <div class="field">
+        <label for="finish">Finish</label>
+        <div class="combo">
+          <input id="finish" name="finish" value="{{ query.finish|default:'' }}" placeholder="Start typing, e.g. Los Angeles" required
+                 role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="finish-list"
+                 aria-describedby="finish-hint" autocomplete="off" spellcheck="false">
+          <ul id="finish-list" role="listbox" aria-label="Finish suggestions" hidden></ul>
+        </div>
+        <div class="hint" id="finish-hint" aria-live="polite"></div>
+      </div>
+      <div class="row">
+        <label>Start fuel (1 = full, 0.5 = half)<input name="start_fuel" value="{{ query.start_fuel|default:'1' }}" inputmode="decimal"></label>
+        <label>Corridor (mi)<input name="corridor_miles" value="{{ query.corridor_miles|default:'' }}" placeholder="10" inputmode="decimal" aria-describedby="corridor-help"></label>
+      </div>
+      <p class="help" id="corridor-help">Corridor: how many miles from the route a fuel station can be and still be used. The default is 10. Widen it if a route has too few stations.</p>
+      <input type="hidden" name="route" value="{{ query.route|default:'0' }}">
+      <button type="submit" id="plan-btn">Plan route</button>
+    </form>
+
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+    {% if plan %}
+      {% if plan.options|length > 1 %}
+      <div class="choices">
+        {% for opt in plan.options %}
+          {% if opt.feasible and opt.index == plan.selected_route %}
+          <div class="choice kept">
+            <div class="t">{{ opt.label }}</div>
+            <div class="m">${{ opt.total_fuel_cost|floatformat:2 }} fuel · {{ opt.distance_miles|floatformat:0 }} mi · {{ opt.duration_hours|floatformat:1 }} h · {{ opt.number_of_stops }} stops</div>
+            {% if opt.compared %}<div class="m">{{ opt.compared }}</div>{% endif %}
+            <div class="keep">Showing this road</div>
+          </div>
+          {% elif opt.feasible %}
+          <a class="choice" href="{{ opt.choose_url }}">
+            <div class="t">{{ opt.label }}</div>
+            <div class="m">${{ opt.total_fuel_cost|floatformat:2 }} fuel · {{ opt.distance_miles|floatformat:0 }} mi · {{ opt.duration_hours|floatformat:1 }} h · {{ opt.number_of_stops }} stops</div>
+            {% if opt.compared %}<div class="m">{{ opt.compared }}</div>{% endif %}
+            <div class="keep">Keep this road</div>
+          </a>
+          {% else %}
+          <div class="choice">
+            <div class="t">{{ opt.label }}</div>
+            <div class="bad">{{ opt.error }}</div>
+          </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="kpis three">
+        <div class="kpi"><b>${{ plan.summary.total_fuel_cost|floatformat:2 }}</b><span>fuel cost</span></div>
+        <div class="kpi"><b>{{ plan.summary.number_of_stops }}</b><span>fuel stops</span></div>
+        <div class="kpi saved"><b>{% if plan.summary.savings is not None %}${{ plan.summary.savings|floatformat:2 }}{% else %}–{% endif %}</b><span>saving $</span></div>
+      </div>
+      {% if plan.summary.savings is not None %}
+      <div class="help saved-why">{% if plan.summary.savings > 0 %}A driver who doesn't compare prices and fills up at the last station before running low would pay ${{ plan.summary.baseline_fuel_cost|floatformat:2 }} over {{ plan.summary.baseline_stops }} stop{{ plan.summary.baseline_stops|pluralize }}. This plan saves ${{ plan.summary.savings|floatformat:2 }}:<ul><li>${{ plan.summary.savings_breakdown.from_cheaper_stations|floatformat:2 }} from stopping at cheaper stations</li><li>${{ plan.summary.savings_breakdown.from_partial_fills|floatformat:2 }} from not filling up when a cheaper station is ahead</li></ul>{% elif plan.summary.baseline_stops %}Filling up at the last station before running low costs the same here, so there is nothing to save on this road.{% else %}No fuel stop is needed, so there is nothing to save.{% endif %}</div>
+      {% endif %}
+      <div class="kpis">
+        <div class="kpi"><b>{{ plan.route.distance_miles|floatformat:0 }} mi</b><span>{{ plan.route.duration_hours|floatformat:1 }} h driving</span></div>
+        <div class="kpi"><b>{{ plan.summary.gallons_purchased|floatformat:1 }} gal</b><span>{% if plan.summary.average_price_paid %}avg ${{ plan.summary.average_price_paid|floatformat:3 }}/gal{% else %}purchased{% endif %}</span></div>
+      </div>
+      <div class="trip">
+        <div><b>{{ plan.summary.gallons_at_departure|floatformat:1 }} gal</b><span>at the start · {{ plan.summary.range_miles_at_departure|floatformat:0 }} mi of range</span></div>
+        <div><b>{{ plan.summary.gallons_at_finish|floatformat:1 }} gal</b><span>left at the finish · {{ plan.summary.range_miles_at_finish|floatformat:0 }} mi of range</span></div>
+      </div>
+      <ol id="stops">
+        {% for s in plan.fuel_stops %}
+          <li data-i="{{ forloop.counter0 }}">
+            <div class="t">{{ s.stop_number }}. {{ s.name }}</div>
+            <div class="m">{{ s.city }}, {{ s.state }} · mile {{ s.route_mile|floatformat:0 }}{% if s.distance_off_route_miles >= 0.5 %} · town is {{ s.distance_off_route_miles|floatformat:1 }} mi from the highway{% endif %} · ${{ s.price_per_gallon|floatformat:3 }}/gal · ${{ s.cost|floatformat:2 }}</div>
+            <div class="stats">
+              <div>Drove {{ s.miles_since_last|floatformat:0 }} mi · arrived with {{ s.fuel_on_arrival_gallons|floatformat:1 }} gal ({{ s.range_miles_on_arrival|floatformat:0 }} mi left)</div>
+              <div>Bought {{ s.gallons_purchased|floatformat:1 }} gal{% if s.filled_tank %} and filled the tank{% endif %} · left with {{ s.gallons_after_purchase|floatformat:1 }} gal ({{ s.range_miles_after_purchase|floatformat:0 }} mi)</div>
+              <div>{% if s.next_is_finish %}Finish is {{ s.miles_until_next|floatformat:0 }} mi ahead{% else %}Next stop is {{ s.miles_until_next|floatformat:0 }} mi ahead{% endif %}</div>
+            </div>
+            {% if s.reason %}<div class="why">{{ s.reason }}</div>{% endif %}
+          </li>
+        {% empty %}
+          <li class="endpoint">No fuel stop. The {{ plan.summary.gallons_at_departure|floatformat:1 }} gal at the start covers all {{ plan.route.distance_miles|floatformat:0 }} miles.</li>
+        {% endfor %}
+      </ol>
+      <p class="note">The ${{ plan.summary.total_fuel_cost|floatformat:2 }} is money paid at the stops. Fuel already in the tank at the start is not included. After the first fill, every stop and the finish keep at least {{ plan.assumptions.reserve_gallons|floatformat:0 }} gallons, in case a pump is out. The first pump can be reached with less when the tank started with only that much. Pins sit on the highway at that mile. The town named on the price list can be a few miles off the exit.</p>
+    {% endif %}
+  </aside>
+  <div id="map"></div>
+</div>
+
+{{ plan|json_script:"plan-data" }}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+  function decode(str, precision) {
+    let index = 0, lat = 0, lng = 0, coords = [], factor = Math.pow(10, precision);
+    while (index < str.length) {
+      for (const which of [0, 1]) {
+        let shift = 0, result = 0, b;
+        do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+        const d = (result & 1) ? ~(result >> 1) : (result >> 1);
+        if (which === 0) lat += d; else lng += d;
+      }
+      coords.push([lat / factor, lng / factor]);
+    }
+    return coords;
+  }
+
+  const map = L.map('map', { zoomSnap: 0.25 }).setView([39.5, -98.35], 4);
+  // OSM's tile usage policy rejects requests without a Referer. Django's default
+  // Referrer-Policy (same-origin) strips it from cross-origin requests, so send the origin here.
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    referrerPolicy: 'strict-origin-when-cross-origin',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | routing &copy; OSRM'
+  }).addTo(map);
+
+  const plan = JSON.parse(document.getElementById('plan-data').textContent);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  if (plan) {
+    const lines = [];
+    if (plan.other_geometry && plan.other_geometry.encoded) {
+      lines.push(L.polyline(decode(plan.other_geometry.encoded, 6), {
+        color: '#94a3b8', weight: 4, opacity: .8, dashArray: '7 8'
+      }).bindPopup('The other road').addTo(map));
+    }
+    const line = L.polyline(decode(plan.route.geometry.encoded, 6), { color: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2563eb', weight: 5, opacity: .85 }).addTo(map);
+    lines.push(line);
+    L.circleMarker([plan.start.lat, plan.start.lon], { radius: 8, color: '#fff', weight: 2, fillColor: '#16a34a', fillOpacity: 1 })
+      .bindPopup('<b>Start</b><br>' + esc(plan.start.query_resolved_to)).addTo(map);
+    L.circleMarker([plan.finish.lat, plan.finish.lon], { radius: 8, color: '#fff', weight: 2, fillColor: '#dc2626', fillOpacity: 1 })
+      .bindPopup('<b>Finish</b><br>' + esc(plan.finish.query_resolved_to)).addTo(map);
+
+    const markers = plan.fuel_stops.map(s => L.marker([s.lat, s.lon], {
+      icon: L.divIcon({ className: '', html: '<div class="pin">' + s.stop_number + '</div>', iconSize: [24, 24], iconAnchor: [12, 12] })
+    }).bindPopup(
+      '<b>' + s.stop_number + '. ' + esc(s.name) + '</b><br>' + esc(s.address) + ', ' + esc(s.city) + ', ' + s.state +
+      '<br>Drove ' + Math.round(s.miles_since_last) + ' mi · arrived with ' + s.fuel_on_arrival_gallons.toFixed(1) + ' gal' +
+      '<br>Bought ' + s.gallons_purchased.toFixed(1) + ' gal · left with ' + s.gallons_after_purchase.toFixed(1) +
+      ' gal (' + Math.round(s.range_miles_after_purchase) + ' mi)' +
+      '<br>On the highway at mile ' + Math.round(s.route_mile) +
+      (s.distance_off_route_miles >= 0.5 ? '. The town center is ' + s.distance_off_route_miles.toFixed(1) + ' mi away.' : '.') +
+      '<br>$' + s.price_per_gallon.toFixed(3) + '/gal · $' + s.cost.toFixed(2) +
+      (s.reason ? '<br><i>' + esc(s.reason) + '</i>' : '')
+    ).addTo(map));
+
+    if (line.getLatLngs().length) map.fitBounds(L.featureGroup(lines).getBounds(), { padding: [30, 30] });
+    document.querySelectorAll('#stops li[data-i]').forEach(li => li.addEventListener('click', () => {
+      const m = markers[+li.dataset.i]; map.setView(m.getLatLng(), 10); m.openPopup();
+    }));
+  }
+
+  // --- Start/finish autocomplete (WAI-ARIA combobox) ------------------------------------
+  // Suggestions come from /api/places/ (local Census data). A field only counts as filled once a
+  // suggestion is picked (or "lat, lon" is typed), so the planner never receives an unknown place.
+  const SUGGEST_URL = "{% url 'place-suggestions' %}";
+  const COORDS = /^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/;
+  const isAccepted = input => {
+    const v = input.value.trim();
+    return COORDS.test(v) || (!!input.dataset.picked && v.toLowerCase() === input.dataset.picked.toLowerCase());
+  };
+
+  function setupCombo(input) {
+    const list = document.getElementById(input.getAttribute('aria-controls'));
+    const hint = document.getElementById(input.id + '-hint');
+    let items = [], active = -1, timer = null, ctrl = null;
+    // A value already in the box was submitted before (a plan, or a later error such as start fuel).
+    // Keep it accepted so changing the fuel and clicking Plan does not demand the place be picked again.
+    input.dataset.picked = input.value;
+
+    const open = () => { list.hidden = false; input.setAttribute('aria-expanded', 'true'); };
+    const close = () => {
+      list.hidden = true; input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant'); active = -1;
+    };
+    const clearError = () => { hint.textContent = ''; input.removeAttribute('aria-invalid'); };
+
+    function highlight(i) {
+      active = i;
+      list.querySelectorAll('[role=option]').forEach((li, j) => li.setAttribute('aria-selected', String(j === i)));
+      const li = document.getElementById(input.id + '-opt-' + i);
+      if (li) { input.setAttribute('aria-activedescendant', li.id); li.scrollIntoView({ block: 'nearest' }); }
+    }
+
+    function render(message) {
+      list.replaceChildren();
+      if (message) {
+        const li = document.createElement('li');
+        li.className = 'empty'; li.textContent = message;
+        list.append(li);
+      }
+      items.forEach((r, i) => {
+        const li = document.createElement('li');
+        li.id = input.id + '-opt-' + i;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', 'false');
+        li.innerHTML = '<span>' + esc(r.label) + '</span><small>' + esc(r.state_name) + '</small>';
+        li.addEventListener('mousedown', e => { e.preventDefault(); choose(i); });  // before input blurs
+        li.addEventListener('mousemove', () => active !== i && highlight(i));
+        list.append(li);
+      });
+      open();
+      if (items.length) highlight(0);  // so "new" + Enter picks the top match
+    }
+
+    function choose(i) {
+      const r = items[i];
+      if (!r) return;
+      input.value = r.label;
+      input.dataset.picked = r.label;
+      clearError();
+      close();
+    }
+
+    input.addEventListener('input', () => {
+      clearError();
+      const q = input.value.trim();
+      clearTimeout(timer);
+      if (ctrl) ctrl.abort();
+      if (q.length < 2 || COORDS.test(q)) { items = []; close(); return; }
+      timer = setTimeout(async () => {
+        ctrl = new AbortController();
+        try {
+          const res = await fetch(SUGGEST_URL + '?q=' + encodeURIComponent(q), { signal: ctrl.signal });
+          items = (await res.json()).results || [];
+          const exact = items.find(r => r.label.toLowerCase() === q.toLowerCase());
+          if (exact) input.dataset.picked = exact.label;  // typed a full "City, ST" exactly
+          if (document.activeElement === input) render(items.length ? null : 'No matching US city or town');
+        } catch (e) {
+          if (e.name !== 'AbortError') { items = []; render('Suggestions are unavailable right now'); }
+        }
+      }, 150);
+    });
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (!items.length) return;
+        e.preventDefault();
+        if (list.hidden) { render(); return; }
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        highlight((active + step + items.length) % items.length);
+      } else if (e.key === 'Enter' && !list.hidden && active >= 0) {
+        e.preventDefault();
+        choose(active);
+      } else if (e.key === 'Escape' && !list.hidden) {
+        e.preventDefault();
+        close();
+      }
+    });
+    input.addEventListener('focus', () => { if (items.length && !isAccepted(input)) render(); });
+    input.addEventListener('blur', close);
+    return { input, hint };
+  }
+
+  const combos = [setupCombo(document.getElementById('start')), setupCombo(document.getElementById('finish'))];
+  document.querySelector('form').addEventListener('submit', e => {
+    const bad = combos.find(c => !isAccepted(c.input));
+    if (bad) {
+      e.preventDefault();
+      bad.hint.textContent = bad.input.value.trim()
+        ? 'Choose a place from the list (or enter coordinates as "lat, lon").'
+        : 'Start typing a US city or town, then choose it from the list.';
+      bad.input.setAttribute('aria-invalid', 'true');
+      bad.input.focus();
+      return;
+    }
+    const btn = document.getElementById('plan-btn');
+    btn.disabled = true; btn.textContent = 'Planning route…';
+  });
+  // Back/forward cache restores the disabled button; reset it.
+  window.addEventListener('pageshow', () => {
+    const btn = document.getElementById('plan-btn');
+    btn.disabled = false; btn.textContent = 'Plan route';
+  });
+</script>
+</body>
+</html>
